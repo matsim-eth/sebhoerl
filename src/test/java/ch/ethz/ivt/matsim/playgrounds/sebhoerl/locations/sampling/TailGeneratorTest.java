@@ -1,6 +1,7 @@
 package ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.sampling;
 
-import ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.relaxation.TailGenerator;
+import ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.continuous.AngularContinuousTailSolver;
+import ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.continuous.ContinuousSolver;
 import org.apache.commons.math3.geometry.euclidean.twod.Vector2D;
 import org.junit.Assert;
 import org.junit.Test;
@@ -12,12 +13,12 @@ import java.util.Random;
 public class TailGeneratorTest {
     @Test
     public void testTailGenerator() {
-        TailGenerator tailSampler = new TailGenerator(new Random(0L));
+        AngularContinuousTailSolver tailSampler = new AngularContinuousTailSolver(new Random(0L));
 
         Vector2D anchorLocation = new Vector2D(50.0, 50.0);
         List<Double> distances = Arrays.asList(5.0, 10.0, 2.0);
 
-        TailGenerator.Result result = tailSampler.sample(anchorLocation, distances);
+        ContinuousSolver.Result result = tailSampler.solve(anchorLocation, distances);
 
         Assert.assertEquals(3, result.getLocations().size());
         Assert.assertEquals(5.0, result.getLocations().get(0).distance(anchorLocation), 1e-3);

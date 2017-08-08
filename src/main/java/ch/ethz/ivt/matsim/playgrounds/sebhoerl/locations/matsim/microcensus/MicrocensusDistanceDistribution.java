@@ -1,6 +1,6 @@
 package ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.matsim.microcensus;
 
-import ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.sampling.DistanceDistribution;
+import ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.sampling.distances.DistanceDistribution;
 
 import java.util.ArrayList;
 import java.util.List;

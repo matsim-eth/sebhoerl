@@ -10,6 +10,7 @@ public class MicrocensusReader {
 
     final private Microcensus microcensus;
     final private Map<String, Microcensus.Mode> MODE_MAP = new HashMap<>();
+    final private Map<String, Microcensus.Purpose> PURPOSE__MAP = new HashMap<>();
 
     private void prepareModeMap() {
         MODE_MAP.put("2", Microcensus.Mode.pt);
@@ -24,8 +25,19 @@ public class MicrocensusReader {
         MODE_MAP.put("15", Microcensus.Mode.walk);
     }
 
+    private void preparePurposeMap() {
+        PURPOSE__MAP.put("4", Microcensus.Purpose.shop);
+        PURPOSE__MAP.put("5", Microcensus.Purpose.shop);
+        PURPOSE__MAP.put("6", Microcensus.Purpose.remote_work);
+        PURPOSE__MAP.put("7", Microcensus.Purpose.remote_work);
+        PURPOSE__MAP.put("8", Microcensus.Purpose.leisure);
+        PURPOSE__MAP.put("9", Microcensus.Purpose.escort_kids);
+        PURPOSE__MAP.put("10", Microcensus.Purpose.escort_other);
+    }
+
     public MicrocensusReader(Microcensus microcensus) {
         prepareModeMap();
+        preparePurposeMap();
         this.microcensus = microcensus;
     }
 
@@ -56,12 +68,14 @@ public class MicrocensusReader {
             } else {
                 double distance = Double.parseDouble(line.get(header.indexOf("w_dist_obj2")));
                 double travelTime = Double.parseDouble(line.get(header.indexOf("dauer2")));
+
                 Microcensus.Mode mode = MODE_MAP.get(line.get(header.indexOf("wmittel")));
+                Microcensus.Purpose purpose = PURPOSE__MAP.get(line.get(header.indexOf("wzweck1")));
 
                 distance *= 1000.0;
                 travelTime *= 60.0;
 
-                if (mode != null) {
+                if (mode != null && purpose != null && distance > 0.0 && travelTime > 0.0) {
                     microcensus.addObservation(distance, travelTime, mode);
                 }
             }
@@ -71,7 +85,7 @@ public class MicrocensusReader {
     }
 
     static public void main(String[] args) throws IOException {
-        Microcensus microcensus = new Microcensus(300, 30.0 * 3600.0, 100);
+        Microcensus microcensus = new Microcensus(); //new Microcensus(300, 30.0 * 3600.0, 100);
         MicrocensusReader loader = new MicrocensusReader(microcensus);
         loader.read(new File("/home/sebastian/uq/project/Sebastian.csv"));
 

@@ -1,6 +1,5 @@
 package ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations;
 
-import ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.discrete.DiscreteLocation;
 import ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.discrete.discretizer.LocationDiscretizer;
 import ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.discrete.solver.DiscreteChainSolver;
 import ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.discrete.solver.IterativeDiscreteChainSolver;
@@ -16,6 +15,9 @@ import ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.continuous.GravityConti
 import ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.continuous.AngularContinuousTailSolver;
 import ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.matsim.trip_chain.TripChain;
 import ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.matsim.trip_chain.TripChainFinder;
+import ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.runner.BasicInputChain;
+import ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.runner.BasicInputChainElement;
+import ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.runner.LocationAssignment;
 import ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.sampling.*;
 import ch.ethz.ivt.matsim.playgrounds.sebhoerl.locations.sampling.distances.DistanceDistribution;
 import org.apache.commons.math3.geometry.euclidean.twod.Vector2D;
@@ -37,7 +39,7 @@ import java.io.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
-public class RunSampler {
+public class RunSamplerWithTails {
     static public void main(String[] args) throws IOException {
         Microcensus microcensus = new Microcensus(); //new Microcensus(300, 30.0 * 3600.0, 100);
         MicrocensusReader loader = new MicrocensusReader(microcensus);
@@ -69,7 +71,8 @@ public class RunSampler {
         while (personIterator.hasNext()) {
             Person person = personIterator.next();
             List<Activity> activites = person.getSelectedPlan().getPlanElements().stream().filter(Activity.class::isInstance).map(Activity.class::cast).collect(Collectors.toList());
-            if (!activites.get(0).getType().equals("home") || !activites.get(activites.size() - 1).getType().equals("home")) personIterator.remove();
+            //if (!activites.get(0).getType().equals("home") || !activites.get(activites.size() - 1).getType().equals("home")) personIterator.remove();
+            if (!activites.get(0).getType().equals("home")) personIterator.remove();
         }
 
         Map<String, FacilityDiscretizer> discretizers = new FacilityDiscretizerFactory(new Random(0L), 50.0)
@@ -82,12 +85,14 @@ public class RunSampler {
         // Prepare Location Choice
 
         ContinuousChainSolver chainSolver = new GravityContinuousChainSolver(new Random(0), 0.1, 10.0, 1000);
-        ChainSampler sampler = new ChainSampler(chainSolver, 1000);
-        DiscreteChainSolver discreteSolver = new IterativeDiscreteChainSolver(chainSolver, 1000);
+        ChainSampler chainSampler = new ChainSampler(chainSolver, 1000);
+        DiscreteChainSolver discreteChainSolver = new IterativeDiscreteChainSolver(chainSolver, 1000);
 
-        AngularContinuousTailSolver tailGenerator = new AngularContinuousTailSolver(new Random(0));
-        TailSampler tailChainSampler = new TailSampler(tailGenerator, 1000);
-        IterativeDiscreteTailSolver discreteTailSolver = new IterativeDiscreteTailSolver(tailGenerator, 1000);
+        AngularContinuousTailSolver tailSolver = new AngularContinuousTailSolver(new Random(0));
+        TailSampler tailSampler = new TailSampler(tailSolver, 1000);
+        IterativeDiscreteTailSolver discreteTailSolver = new IterativeDiscreteTailSolver(tailSolver, 1000);
+
+        LocationAssignment locationAssignment = new LocationAssignment(chainSampler, tailSampler, discreteChainSolver, discreteTailSolver);
 
         DescriptiveStatistics statistics = new DescriptiveStatistics();
         Map<String, DescriptiveStatistics> statisticsByMode = new HashMap<>();
@@ -102,85 +107,88 @@ public class RunSampler {
         Set<Id<Person>> invalidStaticIds = new HashSet<>();
 
         long numberOfPersons = 0;
-        long totalNumberOfPersons = scenario.getPopulation().getPersons().size();
         Random random = new Random(0L);
 
         for (Person person : scenario.getPopulation().getPersons().values()) {
-            //if (numberOfPersons > 500) break;
-
+            //if (numberOfPersons == 500) break;
             List<TripChain> tripChains = tripChainFinder.findTripChains(person.getSelectedPlan());
 
             for (TripChain tripChain : tripChains) {
                 // Preparation of trip chain
 
-                List<DistanceDistribution> distributions = new LinkedList<>();
-                List<Double> thresholds = new LinkedList<>();
+                BasicInputChain inputChain = new BasicInputChain(tripChain.isVariableBeginning(), tripChain.isVariableEnd());
 
                 for (TripStructureUtils.Trip trip : tripChain.getTrips()) {
                     double travelTime = Math.max(0.0, trip.getDestinationActivity().getStartTime() - trip.getOriginActivity().getEndTime());
 
+                    LocationDiscretizer locationDiscretizer = discretizers.get(trip.getDestinationActivity().getType());
+                    DistanceDistribution distanceDistribution = null;
+                    double discretizationThreshold;
+
+                    Coord originCoord = trip.getOriginActivity().getCoord();
+                    Coord destinationCoord = trip.getDestinationActivity().getCoord();
+
+                    Vector2D originLocation = new Vector2D(originCoord.getX(), originCoord.getY());
+                    Vector2D destinationLocation = new Vector2D(destinationCoord.getX(), destinationCoord.getY());
+
                     switch (trip.getLegsOnly().get(0).getMode()) {
                         case "car":
-                            distributions.add(microcensus.createDistanceDistribution(random, Microcensus.Mode.car, travelTime));
-                            //thresholds.add(1000.0);
-                            thresholds.add(100.0);
+                            distanceDistribution = microcensus.createDistanceDistribution(random, Microcensus.Mode.car, travelTime);
+                            discretizationThreshold = 1000.0;
                             break;
                         case "pt":
-                            distributions.add(microcensus.createDistanceDistribution(random, Microcensus.Mode.pt, travelTime));
-                            //thresholds.add(1000.0);
-                            thresholds.add(100.0);
+                            distanceDistribution = microcensus.createDistanceDistribution(random, Microcensus.Mode.pt, travelTime);
+                            discretizationThreshold = 1000.0;
                             break;
                         case "bike":
-                            distributions.add(microcensus.createDistanceDistribution(random, Microcensus.Mode.bike, travelTime));
-                            //thresholds.add(200.0);
-                            thresholds.add(20.0);
+                            distanceDistribution = microcensus.createDistanceDistribution(random, Microcensus.Mode.bike, travelTime);
+                            discretizationThreshold = 200.0;
                             break;
                         case "walk":
-                            distributions.add(microcensus.createDistanceDistribution(random, Microcensus.Mode.walk, travelTime));
-                            //thresholds.add(50.0);
-                            thresholds.add(5.0);
+                            distanceDistribution = microcensus.createDistanceDistribution(random, Microcensus.Mode.walk, travelTime);
+                            discretizationThreshold = 50.0;
                             break;
                         default:
                             throw new RuntimeException();
                     }
+
+                    inputChain.getElements().add(new BasicInputChainElement(originLocation, destinationLocation, distanceDistribution, locationDiscretizer, discretizationThreshold));
                 }
 
-                List<LocationDiscretizer> tripDiscretizers = new LinkedList<>();
-                for (TripStructureUtils.Trip trip : tripChain.getTrips()) {
-                    tripDiscretizers.add(discretizers.get(trip.getDestinationActivity().getType()));
+                // Perform location assignment
+
+                LocationAssignment.Result locationAssignmentResult = locationAssignment.processInputChain(inputChain);
+
+                // Transfer back to MATSim
+
+                List<Activity> activities = tripChain.getActivities();
+
+                for (int i = 0; i < activities.size(); i++) {
+                    Activity activity = activities.get(i);
+                    FacilityLocation location = (FacilityLocation) locationAssignmentResult.discreteLocations.get(i);
+
+                    if (location != null) {
+                        activity.setFacilityId(location.getFacility().getId());
+                        activity.setLinkId(location.getFacility().getLinkId());
+                        activity.setCoord(location.getFacility().getCoord());
+                    }
                 }
 
-                Coord originCoord = tripChain.getOriginActivity().getCoord();
-                Coord destinationCoord = tripChain.getDestinatonActivity().getCoord();
-
-                Vector2D originLocation = new Vector2D(originCoord.getX(), originCoord.getY());
-                Vector2D destinationLocation = new Vector2D(destinationCoord.getX(), destinationCoord.getY());
-
-                ChainSamplerResult result = sampler.sample(originLocation, destinationLocation, distributions);
-                ContinuousChainSolver.Result chainResult = result.getContinuousSolverResult();
-
-                DiscreteChainSolver.Result discreteResult = discreteSolver.solve(originLocation, destinationLocation, chainResult.getDistances(), thresholds, tripDiscretizers);
+                // Collect debug information into legs
 
                 for (int i = 0; i < tripChain.getTrips().size(); i++) {
                     TripStructureUtils.Trip trip = tripChain.getTrips().get(i);
-                    Activity destinationActivity = trip.getDestinationActivity();
                     Leg leg = trip.getLegsOnly().get(0);
 
-                    if (i < tripChain.getTrips().size() - 1) {
-                        DiscreteLocation discreteLocation = discreteResult.getDiscreteLocations().get(i);
-                        FacilityLocation facilityLocation = (FacilityLocation) discreteLocation;
-                        destinationActivity.setCoord(new Coord(discreteLocation.getLocation().getX(), discreteLocation.getLocation().getY()));
-                        destinationActivity.setFacilityId(facilityLocation.getFacility().getId());
-                    }
-
                     double travelTime = trip.getDestinationActivity().getStartTime() - trip.getOriginActivity().getEndTime();
-                    DebugInformation debugInformation = new DebugInformation(i, tripChain.getTrips().size(), result, discreteResult);
+                    DebugInformation debugInformation = new DebugInformation(i, tripChain.getTrips().size(), locationAssignmentResult.chainSamplerResult, locationAssignmentResult.discreteSolverResult);
+
                     leg.setRoute(new DebugInformationRoute(travelTime, debugInformation));
                 }
 
-                if (result.isConverged()) {
+                if (locationAssignmentResult.chainSamplerResult.isConverged()) {
                     for (int i = 0; i < tripChain.getTrips().size(); i++) {
-                        double difference = Math.abs(discreteResult.getDiscreteDistances().get(i) - chainResult.getDistances().get(i));
+                        double difference = Math.abs(locationAssignmentResult.discreteSolverResult.getDiscreteDistances().get(i) - locationAssignmentResult.chainSamplerResult.getContinuousSolverResult().getDistances().get(i));
                         statistics.addValue(difference);
                         statisticsByMode.get(tripChain.getTrips().get(i).getLegsOnly().get(0).getMode()).addValue(difference);
                     }
@@ -192,7 +200,7 @@ public class RunSampler {
             }
 
             numberOfPersons++;
-            System.out.println(String.format("Total: %d (%.2f%%), Failed: %d (%.2f%%)", numberOfPersons, (double) numberOfPersons / (double) totalNumberOfPersons, failedIds.size(), 100.0 * failedIds.size() / numberOfPersons));
+            System.out.println(String.format("Total: %d, Failed: %d (%.2f%%)", numberOfPersons, failedIds.size(), 100.0 * failedIds.size() / numberOfPersons));
 
             System.out.println(String.format("   Median discretization error: %.2f", statistics.getPercentile(50.0)));
             for (String mode : new String[] { "car", "pt", "bike", "walk" }) {

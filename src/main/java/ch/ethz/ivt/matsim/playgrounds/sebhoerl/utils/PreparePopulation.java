@@ -33,6 +33,9 @@ public class PreparePopulation {
 
                 boolean delete = false;
 
+                String firstActivityType = activities.get(0).getType();
+                String lastActivityType = activities.get(activities.size() - 1).getType();
+
                 for (Activity activity : activities) {
                     if (!counts.containsKey(activity.getType())) {
                         counts.put(activity.getType(), 0L);
@@ -45,6 +48,10 @@ public class PreparePopulation {
                         System.err.println(person.getId() + " " + activity.getType());
                         delete = true;
                     }
+                }
+
+                if (firstActivityType.equals(lastActivityType)) {
+                    activities.get(activities.size() - 1).setType(activities.get(0).getType());
                 }
 
                 if (delete) {
