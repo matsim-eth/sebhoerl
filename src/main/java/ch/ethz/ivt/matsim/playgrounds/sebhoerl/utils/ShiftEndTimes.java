@@ -10,20 +10,23 @@ import java.util.List;
 import java.util.Random;
 import java.util.stream.Collectors;
 
-public class DiluteTimes {
-    static public void main(String args[]) {
-        Scenario scenario = ScenarioUtils.createScenario(ConfigUtils.createConfig());
-        new PopulationReader(scenario).readFile(args[0]);
-
-        Random random = new Random();
-
-        for (Person person : scenario.getPopulation().getPersons().values()) {
+public class ShiftEndTimes {
+	final private double interval;
+	final private Random random;
+	
+	public ShiftEndTimes(double interval, Random random) {
+		this.interval = interval;
+		this.random = random;
+	}
+	
+    public void apply(Population population) {
+        for (Person person : population.getPersons().values()) {
             Plan plan = person.getSelectedPlan();
             List<Activity> activities = person.getSelectedPlan().getPlanElements().stream().filter(p -> p instanceof Activity).map(Activity.class::cast).collect(Collectors.toList());
 
             double firstEndTime = activities.get(0).getEndTime();
             double minimumOffset = -firstEndTime;
-            double offset = Math.max(minimumOffset, random.nextDouble() * 1200.0 - 600.0);
+            double offset = Math.max(minimumOffset, random.nextDouble() * interval - 0.5 * interval);
 
             for (PlanElement planElement : plan.getPlanElements()) {
                 if (planElement instanceof Activity) {
@@ -32,7 +35,15 @@ public class DiluteTimes {
                 }
             }
         }
-
+    }
+    
+    static public void main(String args[]) {
+        Scenario scenario = ScenarioUtils.createScenario(ConfigUtils.createConfig());
+        new PopulationReader(scenario).readFile(args[0]);
+        
+        double interval = args.length > 2 ? Double.parseDouble(args[2]) : 1200.0;
+        new ShiftEndTimes(interval, new Random()).apply(scenario.getPopulation());
+        
         new PopulationWriter(scenario.getPopulation()).write(args[1]);
     }
 }
