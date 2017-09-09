@@ -10,11 +10,11 @@ import java.util.List;
 import java.util.Random;
 import java.util.stream.Collectors;
 
-public class ShiftEndTimes {
+public class ShiftTimes {
 	final private double interval;
 	final private Random random;
 	
-	public ShiftEndTimes(double interval, Random random) {
+	public ShiftTimes(double interval, Random random) {
 		this.interval = interval;
 		this.random = random;
 	}
@@ -32,6 +32,7 @@ public class ShiftEndTimes {
                 if (planElement instanceof Activity) {
                     Activity activity = (Activity) planElement;
                     activity.setEndTime(activity.getEndTime() + offset);
+                    activity.setStartTime(activity.getStartTime() + offset);
                 }
             }
         }
@@ -42,7 +43,7 @@ public class ShiftEndTimes {
         new PopulationReader(scenario).readFile(args[0]);
         
         double interval = args.length > 2 ? Double.parseDouble(args[2]) : 1200.0;
-        new ShiftEndTimes(interval, new Random()).apply(scenario.getPopulation());
+        new ShiftTimes(interval, new Random()).apply(scenario.getPopulation());
         
         new PopulationWriter(scenario.getPopulation()).write(args[1]);
     }

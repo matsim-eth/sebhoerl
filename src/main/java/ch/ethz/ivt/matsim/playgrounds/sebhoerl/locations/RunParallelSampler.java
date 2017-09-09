@@ -35,6 +35,7 @@ import org.matsim.core.router.StageActivityTypes;
 import org.matsim.core.router.StageActivityTypesImpl;
 import org.matsim.core.router.TripStructureUtils;
 import org.matsim.core.scenario.ScenarioUtils;
+import org.matsim.facilities.ActivityFacilities;
 import org.matsim.facilities.MatsimFacilitiesReader;
 import org.matsim.pt.PtConstants;
 
@@ -46,27 +47,14 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 public class RunParallelSampler {
-    static public void main(String[] args) throws Exception {
+	static public void main(String[] args) throws Exception {
         String microcensusInputPath = args[0];
         String populationInputPath = args[1];
         String facilitiesInputPath = args[2];
         String populationOutputPath = args[3];
         String errorsOutputPath = args[4];
         int numberOfThreads = Integer.parseInt(args[5]);
-
-        //Microcensus microcensus = new Microcensus(300, 30.0 * 3600.0, 100);
-        Microcensus microcensus = new Microcensus();
-        microcensus.setModeDefinition(Microcensus.Mode.car, 40, 100, 100.0 * 1e3 / 3600.0);
-        microcensus.setModeDefinition(Microcensus.Mode.pt, 40, 100, 80.0 * 1e3 / 3600.0);
-        microcensus.setModeDefinition(Microcensus.Mode.bike, 40, 100, 40.0 * 1e3 / 3600.0);
-        microcensus.setModeDefinition(Microcensus.Mode.walk, 40, 100, 15.0 * 1e3 / 3600.0);
-
-
-        MicrocensusReader loader = new MicrocensusReader(microcensus);
-        loader.read(new File(microcensusInputPath));
-
-        microcensus.buildDistributions(new Random(0L));
-
+        
         // Load MATSim stuff
         Scenario scenario = ScenarioUtils.createScenario(ConfigUtils.createConfig());
         new PopulationReader(scenario).readFile(populationInputPath);
@@ -87,8 +75,31 @@ public class RunParallelSampler {
                 }
             }
         }
+        
+        Set<Id<Person>> failedIds = run(numberOfThreads, microcensusInputPath, scenario.getPopulation(), scenario.getActivityFacilities());
+        
+        new PopulationWriter(scenario.getPopulation()).write(populationOutputPath);
 
-        Iterator<? extends Person> personIterator = scenario.getPopulation().getPersons().values().iterator();
+        BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(errorsOutputPath)));
+        for (Id<Person> personId : failedIds) writer.write(personId.toString() + "\n");
+        writer.flush();
+        writer.close();
+	}
+	
+    static public Set<Id<Person>> run(int numberOfThreads, String microcensusInputPath, Population population, ActivityFacilities facilities) throws Exception {
+        //Microcensus microcensus = new Microcensus(300, 30.0 * 3600.0, 100);
+        Microcensus microcensus = new Microcensus();
+        microcensus.setModeDefinition(Microcensus.Mode.car, 40, 100, 100.0 * 1e3 / 3600.0);
+        microcensus.setModeDefinition(Microcensus.Mode.pt, 40, 100, 80.0 * 1e3 / 3600.0);
+        microcensus.setModeDefinition(Microcensus.Mode.bike, 40, 100, 40.0 * 1e3 / 3600.0);
+        microcensus.setModeDefinition(Microcensus.Mode.walk, 40, 100, 15.0 * 1e3 / 3600.0);
+
+        MicrocensusReader loader = new MicrocensusReader(microcensus);
+        loader.read(new File(microcensusInputPath));
+
+        microcensus.buildDistributions(new Random(0L));
+
+        Iterator<? extends Person> personIterator = population.getPersons().values().iterator();
 
         while (personIterator.hasNext()) {
             Person person = personIterator.next();
@@ -97,7 +108,7 @@ public class RunParallelSampler {
         }
 
         Map<String, FacilityDiscretizer> discretizers = new FacilityDiscretizerFactory(new Random(0L), 50.0)
-                .createDiscretizers(scenario.getActivityFacilities().getFacilities().values());
+                .createDiscretizers(facilities.getFacilities().values());
 
         Set<String> activityTypes = new HashSet<>(Arrays.asList("shop", "leisure", "escort_kids", "escort_other", "remote_work", "remote_home"));
         StageActivityTypes stageActivityTypes = new StageActivityTypesImpl(PtConstants.TRANSIT_ACTIVITY_TYPE);
@@ -126,13 +137,13 @@ public class RunParallelSampler {
         Set<Id<Person>> invalidStaticIds = Collections.synchronizedSet(new HashSet<>());
 
         AtomicLong numberOfPersons = new AtomicLong(0);
-        long totalNumberOfPersons = scenario.getPopulation().getPersons().size();
+        long totalNumberOfPersons = population.getPersons().size();
         Random random = new Random(0L);
 
         Collection<Callable<Object>> tasks = new LinkedList<>();
         Logger logger = Logger.getLogger(RunParallelSampler.class);
 
-        for (Person person : scenario.getPopulation().getPersons().values()) {
+        for (Person person : population.getPersons().values()) {
             //if (numberOfPersons > 500) break;
 
             tasks.add(() -> {
@@ -199,6 +210,7 @@ public class RunParallelSampler {
                             FacilityLocation facilityLocation = (FacilityLocation) discreteLocation;
                             destinationActivity.setCoord(new Coord(discreteLocation.getLocation().getX(), discreteLocation.getLocation().getY()));
                             destinationActivity.setFacilityId(facilityLocation.getFacility().getId());
+                            destinationActivity.setLinkId(facilityLocation.getFacility().getLinkId());
                         }
 
                         double travelTime = trip.getDestinationActivity().getStartTime() - trip.getOriginActivity().getEndTime();
@@ -252,12 +264,6 @@ public class RunParallelSampler {
         }
 
         infoExecutor.shutdownNow();
-
-        new PopulationWriter(scenario.getPopulation()).write(populationOutputPath);
-
-        BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(errorsOutputPath)));
-        for (Id<Person> personId : failedIds) writer.write(personId.toString() + "\n");
-        writer.flush();
-        writer.close();
+        return failedIds;
     }
 }
