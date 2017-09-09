@@ -12,13 +12,16 @@ import java.util.Random;
 import java.util.stream.Collectors;
 
 public class Downsample {
-    static public void main(String[] args) {
-        Scenario scenario = ScenarioUtils.createScenario(ConfigUtils.createConfig());
-        new PopulationReader(scenario).readFile(args[0]);
-        double probability = Double.parseDouble(args[1]);
-
-        Random random = new Random();
-        Iterator<? extends Person> personIterator = scenario.getPopulation().getPersons().values().iterator();
+	final private double probability;
+	final private Random random;
+	
+	public Downsample(double fraction, Random random) {
+		this.probability = fraction;
+		this.random = random;
+	}
+	
+	public void run(Population population) {
+        Iterator<? extends Person> personIterator = population.getPersons().values().iterator();
 
         while (personIterator.hasNext()) {
             personIterator.next();
@@ -27,7 +30,15 @@ public class Downsample {
                 personIterator.remove();
             }
         }
-
+	}
+	
+    static public void main(String[] args) {
+        Scenario scenario = ScenarioUtils.createScenario(ConfigUtils.createConfig());
+        new PopulationReader(scenario).readFile(args[0]);
+        
+        double probability = Double.parseDouble(args[1]);
+        new Downsample(probability, new Random()).run(scenario.getPopulation());
+        
         new PopulationWriter(scenario.getPopulation()).write(args[2]);
     }
 }
