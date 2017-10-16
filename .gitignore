@@ -1,3 +1,6 @@
 sebhoerl.iml
 target
 output
+.classpath
+.project
+.settings
