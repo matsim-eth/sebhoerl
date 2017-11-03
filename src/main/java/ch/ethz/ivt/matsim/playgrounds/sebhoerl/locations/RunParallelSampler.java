@@ -30,6 +30,8 @@ import org.matsim.api.core.v01.Id;
 import org.matsim.api.core.v01.Scenario;
 import org.matsim.api.core.v01.population.*;
 import org.matsim.core.config.ConfigUtils;
+import org.matsim.core.population.PersonUtils;
+import org.matsim.core.population.PopulationUtils;
 import org.matsim.core.population.io.PopulationReader;
 import org.matsim.core.router.StageActivityTypes;
 import org.matsim.core.router.StageActivityTypesImpl;
@@ -86,7 +88,11 @@ public class RunParallelSampler {
         writer.close();
 	}
 	
-    static public Set<Id<Person>> run(int numberOfThreads, String microcensusInputPath, Population population, ActivityFacilities facilities) throws Exception {
+	static public Set<Id<Person>> run(int numberOfThreads, String microcensusInputPath, Population population, ActivityFacilities facilities) throws Exception {
+	    return run(numberOfThreads, microcensusInputPath, population, facilities, 1);
+	}
+	
+    static public Set<Id<Person>> run(int numberOfThreads, String microcensusInputPath, Population population, ActivityFacilities facilities, int numberOfPlans) throws Exception {
         //Microcensus microcensus = new Microcensus(300, 30.0 * 3600.0, 100);
         Microcensus microcensus = new Microcensus();
         microcensus.setModeDefinition(Microcensus.Mode.car, 40, 100, 100.0 * 1e3 / 3600.0);
@@ -144,102 +150,109 @@ public class RunParallelSampler {
         Logger logger = Logger.getLogger(RunParallelSampler.class);
 
         for (Person person : population.getPersons().values()) {
-            //if (numberOfPersons > 500) break;
-
-            tasks.add(() -> {
-                List<TripChain> tripChains = tripChainFinder.findTripChains(person.getSelectedPlan());
-
-                for (TripChain tripChain : tripChains) {
-                    // Preparation of trip chain
-
-                    List<DistanceDistribution> distributions = new LinkedList<>();
-                    List<Double> thresholds = new LinkedList<>();
-
-                    for (TripStructureUtils.Trip trip : tripChain.getTrips()) {
-                        double travelTime = Math.max(0.0, trip.getDestinationActivity().getStartTime() - trip.getOriginActivity().getEndTime());
-
-                        switch (trip.getLegsOnly().get(0).getMode()) {
-                            case "car":
-                                distributions.add(microcensus.createDistanceDistribution(random, Microcensus.Mode.car, travelTime));
-                                //thresholds.add(1000.0);
-                                thresholds.add(200.0);
-                                break;
-                            case "pt":
-                                distributions.add(microcensus.createDistanceDistribution(random, Microcensus.Mode.pt, travelTime));
-                                //thresholds.add(1000.0);
-                                thresholds.add(200.0);
-                                break;
-                            case "bike":
-                                distributions.add(microcensus.createDistanceDistribution(random, Microcensus.Mode.bike, travelTime));
-                                //thresholds.add(200.0);
-                                thresholds.add(100.0);
-                                break;
-                            case "walk":
-                                distributions.add(microcensus.createDistanceDistribution(random, Microcensus.Mode.walk, travelTime));
-                                //thresholds.add(50.0);
-                                thresholds.add(50.0);
-                                break;
-                            default:
-                                throw new RuntimeException();
-                        }
-                    }
-
-                    List<LocationDiscretizer> tripDiscretizers = new LinkedList<>();
-                    for (TripStructureUtils.Trip trip : tripChain.getTrips()) {
-                        tripDiscretizers.add(discretizers.get(trip.getDestinationActivity().getType()));
-                    }
-
-                    Coord originCoord = tripChain.getOriginActivity().getCoord();
-                    Coord destinationCoord = tripChain.getDestinatonActivity().getCoord();
-
-                    Vector2D originLocation = new Vector2D(originCoord.getX(), originCoord.getY());
-                    Vector2D destinationLocation = new Vector2D(destinationCoord.getX(), destinationCoord.getY());
-
-                    ChainSamplerResult result = sampler.sample(originLocation, destinationLocation, distributions);
-                    ContinuousChainSolver.Result chainResult = result.getContinuousSolverResult();
-
-                    DiscreteChainSolver.Result discreteResult = discreteSolver.solve(originLocation, destinationLocation, chainResult.getDistances(), thresholds, tripDiscretizers);
-
-                    for (int i = 0; i < tripChain.getTrips().size(); i++) {
-                        TripStructureUtils.Trip trip = tripChain.getTrips().get(i);
-                        Activity destinationActivity = trip.getDestinationActivity();
-                        Leg leg = trip.getLegsOnly().get(0);
-
-                        if (i < tripChain.getTrips().size() - 1) {
-                            DiscreteLocation discreteLocation = discreteResult.getDiscreteLocations().get(i);
-                            FacilityLocation facilityLocation = (FacilityLocation) discreteLocation;
-                            destinationActivity.setCoord(new Coord(discreteLocation.getLocation().getX(), discreteLocation.getLocation().getY()));
-                            destinationActivity.setFacilityId(facilityLocation.getFacility().getId());
-                            destinationActivity.setLinkId(facilityLocation.getFacility().getLinkId());
-                        }
-
-                        double travelTime = trip.getDestinationActivity().getStartTime() - trip.getOriginActivity().getEndTime();
-                        DebugInformation debugInformation = new DebugInformation(i, tripChain.getTrips().size(), result, discreteResult);
-                        leg.setRoute(new DebugInformationRoute(travelTime, debugInformation));
-                    }
-
-                    if (result.isConverged()) {
-                        for (int i = 0; i < tripChain.getTrips().size(); i++) {
-                            double difference = Math.abs(discreteResult.getDiscreteDistances().get(i) - chainResult.getDistances().get(i));
-
-                            synchronized (statistics) {
-                                statistics.addValue(difference);
-                            }
-
-                            synchronized (statisticsByMode) {
-                                statisticsByMode.get(tripChain.getTrips().get(i).getLegsOnly().get(0).getMode()).addValue(difference);
-                            }
-                        }
-                    } else if (tripChain.getTrips().size() > 1) {
-                        failedIds.add(person.getId());
-                    } else {
-                        invalidStaticIds.add(person.getId());
-                    }
-                }
-
-                numberOfPersons.incrementAndGet();
-                return null;
-            });
+        	Plan selectedPlan = person.getSelectedPlan();
+        	person.removePlan(selectedPlan);
+        	
+        	for (int planIndex = 0; planIndex < numberOfPlans; planIndex++) {
+        		Plan plan = population.getFactory().createPlan();
+        		PopulationUtils.copyFromTo(selectedPlan, plan);
+        		person.addPlan(plan);
+        		
+	            tasks.add(() -> {
+	                List<TripChain> tripChains = tripChainFinder.findTripChains(plan);
+	
+	                for (TripChain tripChain : tripChains) {
+	                    // Preparation of trip chain
+	
+	                    List<DistanceDistribution> distributions = new LinkedList<>();
+	                    List<Double> thresholds = new LinkedList<>();
+	
+	                    for (TripStructureUtils.Trip trip : tripChain.getTrips()) {
+	                        double travelTime = Math.max(0.0, trip.getDestinationActivity().getStartTime() - trip.getOriginActivity().getEndTime());
+	
+	                        switch (trip.getLegsOnly().get(0).getMode()) {
+	                            case "car":
+	                                distributions.add(microcensus.createDistanceDistribution(random, Microcensus.Mode.car, travelTime));
+	                                //thresholds.add(1000.0);
+	                                thresholds.add(200.0);
+	                                break;
+	                            case "pt":
+	                                distributions.add(microcensus.createDistanceDistribution(random, Microcensus.Mode.pt, travelTime));
+	                                //thresholds.add(1000.0);
+	                                thresholds.add(200.0);
+	                                break;
+	                            case "bike":
+	                                distributions.add(microcensus.createDistanceDistribution(random, Microcensus.Mode.bike, travelTime));
+	                                //thresholds.add(200.0);
+	                                thresholds.add(100.0);
+	                                break;
+	                            case "walk":
+	                                distributions.add(microcensus.createDistanceDistribution(random, Microcensus.Mode.walk, travelTime));
+	                                //thresholds.add(50.0);
+	                                thresholds.add(50.0);
+	                                break;
+	                            default:
+	                                throw new RuntimeException();
+	                        }
+	                    }
+	
+	                    List<LocationDiscretizer> tripDiscretizers = new LinkedList<>();
+	                    for (TripStructureUtils.Trip trip : tripChain.getTrips()) {
+	                        tripDiscretizers.add(discretizers.get(trip.getDestinationActivity().getType()));
+	                    }
+	
+	                    Coord originCoord = tripChain.getOriginActivity().getCoord();
+	                    Coord destinationCoord = tripChain.getDestinatonActivity().getCoord();
+	
+	                    Vector2D originLocation = new Vector2D(originCoord.getX(), originCoord.getY());
+	                    Vector2D destinationLocation = new Vector2D(destinationCoord.getX(), destinationCoord.getY());
+	
+	                    ChainSamplerResult result = sampler.sample(originLocation, destinationLocation, distributions);
+	                    ContinuousChainSolver.Result chainResult = result.getContinuousSolverResult();
+	
+	                    DiscreteChainSolver.Result discreteResult = discreteSolver.solve(originLocation, destinationLocation, chainResult.getDistances(), thresholds, tripDiscretizers);
+	
+	                    for (int i = 0; i < tripChain.getTrips().size(); i++) {
+	                        TripStructureUtils.Trip trip = tripChain.getTrips().get(i);
+	                        Activity destinationActivity = trip.getDestinationActivity();
+	                        Leg leg = trip.getLegsOnly().get(0);
+	
+	                        if (i < tripChain.getTrips().size() - 1) {
+	                            DiscreteLocation discreteLocation = discreteResult.getDiscreteLocations().get(i);
+	                            FacilityLocation facilityLocation = (FacilityLocation) discreteLocation;
+	                            destinationActivity.setCoord(new Coord(discreteLocation.getLocation().getX(), discreteLocation.getLocation().getY()));
+	                            destinationActivity.setFacilityId(facilityLocation.getFacility().getId());
+	                            destinationActivity.setLinkId(facilityLocation.getFacility().getLinkId());
+	                        }
+	
+	                        double travelTime = trip.getDestinationActivity().getStartTime() - trip.getOriginActivity().getEndTime();
+	                        DebugInformation debugInformation = new DebugInformation(i, tripChain.getTrips().size(), result, discreteResult);
+	                        leg.setRoute(new DebugInformationRoute(travelTime, debugInformation));
+	                    }
+	
+	                    if (result.isConverged()) {
+	                        for (int i = 0; i < tripChain.getTrips().size(); i++) {
+	                            double difference = Math.abs(discreteResult.getDiscreteDistances().get(i) - chainResult.getDistances().get(i));
+	
+	                            synchronized (statistics) {
+	                                statistics.addValue(difference);
+	                            }
+	
+	                            synchronized (statisticsByMode) {
+	                                statisticsByMode.get(tripChain.getTrips().get(i).getLegsOnly().get(0).getMode()).addValue(difference);
+	                            }
+	                        }
+	                    } else if (tripChain.getTrips().size() > 1) {
+	                        failedIds.add(person.getId());
+	                    } else {
+	                        invalidStaticIds.add(person.getId());
+	                    }
+	                }
+	
+	                numberOfPersons.incrementAndGet();
+	                return null;
+	            });
+        	}
         }
 
         ScheduledExecutorService infoExecutor = Executors.newScheduledThreadPool(1);
